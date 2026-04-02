@@ -1,11 +1,23 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB}
-type Decision struct{ID int64 `json:"id"`;Title string `json:"title"`;Context string `json:"context"`;Options string `json:"options"`;Chosen string `json:"chosen"`;Reasoning string `json:"reasoning"`;Outcome string `json:"outcome"`;Tags string `json:"tags"`;MadeAt string `json:"made_at"`;CreatedAt time.Time `json:"created_at"`;UpdatedAt time.Time `json:"updated_at"`}
-func Open(d string)(*DB,error){os.MkdirAll(d,0755);dsn:=filepath.Join(d,"decisionlog.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);migrate(db);return &DB{db},nil}
-func migrate(db *sql.DB){db.Exec(`CREATE TABLE IF NOT EXISTS decisions(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,context TEXT DEFAULT '',options TEXT DEFAULT '',chosen TEXT DEFAULT '',reasoning TEXT DEFAULT '',outcome TEXT DEFAULT '',tags TEXT DEFAULT '',made_at TEXT DEFAULT '',created_at DATETIME DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)}
-func(db *DB)Create(d *Decision)error{res,err:=db.Exec(`INSERT INTO decisions(title,context,options,chosen,reasoning,outcome,tags,made_at)VALUES(?,?,?,?,?,?,?,?)`,d.Title,d.Context,d.Options,d.Chosen,d.Reasoning,d.Outcome,d.Tags,d.MadeAt);if err!=nil{return err};d.ID,_=res.LastInsertId();return nil}
-func(db *DB)List(q string)([]Decision,error){base:=`SELECT id,title,context,options,chosen,reasoning,outcome,tags,made_at,created_at,updated_at FROM decisions WHERE 1=1`;args:=[]interface{}{};if q!=""{base+=` AND (title LIKE ? OR context LIKE ? OR tags LIKE ?)`;args=append(args,"%"+q+"%","%"+q+"%","%"+q+"%")};base+=` ORDER BY made_at DESC,created_at DESC`;rows,err:=db.Query(base,args...);if err!=nil{return nil,err};defer rows.Close();var out[]Decision;for rows.Next(){var d Decision;rows.Scan(&d.ID,&d.Title,&d.Context,&d.Options,&d.Chosen,&d.Reasoning,&d.Outcome,&d.Tags,&d.MadeAt,&d.CreatedAt,&d.UpdatedAt);out=append(out,d)};return out,nil}
-func(db *DB)Update(d *Decision){db.Exec(`UPDATE decisions SET title=?,context=?,options=?,chosen=?,reasoning=?,outcome=?,tags=?,made_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,d.Title,d.Context,d.Options,d.Chosen,d.Reasoning,d.Outcome,d.Tags,d.MadeAt,d.ID)}
-func(db *DB)Delete(id int64){db.Exec(`DELETE FROM decisions WHERE id=?`,id)}
-func(db *DB)Stats()(map[string]interface{},error){var total int;db.QueryRow(`SELECT COUNT(*) FROM decisions`).Scan(&total);return map[string]interface{}{"decisions":total},nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Item struct{
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Description string `json:"description"`
+	Status string `json:"status"`
+	Category string `json:"category"`
+	Tags string `json:"tags"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"decisionlog.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT DEFAULT '',status TEXT DEFAULT 'active',category TEXT DEFAULT '',tags TEXT DEFAULT '',created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Item)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO items(id,name,description,status,category,tags,created_at)VALUES(?,?,?,?,?,?,?)`,e.ID,e.Name,e.Description,e.Status,e.Category,e.Tags,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Item{var e Item;if d.db.QueryRow(`SELECT id,name,description,status,category,tags,created_at FROM items WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Description,&e.Status,&e.Category,&e.Tags,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Item{rows,_:=d.db.Query(`SELECT id,name,description,status,category,tags,created_at FROM items ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Item;for rows.Next(){var e Item;rows.Scan(&e.ID,&e.Name,&e.Description,&e.Status,&e.Category,&e.Tags,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM items WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM items`).Scan(&n);return n}
